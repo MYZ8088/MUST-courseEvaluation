@@ -1,0 +1,17 @@
+# 后端
+/target/
+course-evaluation-system/backend/target/
+
+# 前端
+course-evaluation-system/frontend/node_modules/
+course-evaluation-system/frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# 日志
+*.log
+
+# 其他
+.DS_Store 
