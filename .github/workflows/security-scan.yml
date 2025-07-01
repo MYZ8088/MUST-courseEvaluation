@@ -1,0 +1,67 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # 每周一凌晨2点运行安全扫描
+    - cron: '0 2 * * 1'
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout代码
+      uses: actions/checkout@v4
+    
+    - name: 设置Java环境
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+    
+    - name: Maven依赖安全扫描
+      working-directory: ./course-evaluation-system/backend
+      run: |
+        mvn org.owasp:dependency-check-maven:check
+      continue-on-error: true
+    
+    - name: 上传安全扫描报告
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-reports
+        path: course-evaluation-system/backend/target/dependency-check-report.html
+        retention-days: 30
+    
+    - name: CodeQL分析
+      uses: github/codeql-action/init@v2
+      with:
+        languages: java, javascript
+    
+    - name: 构建项目
+      working-directory: ./course-evaluation-system/backend
+      run: mvn clean compile -DskipTests
+    
+    - name: 执行CodeQL分析
+      uses: github/codeql-action/analyze@v2
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout代码
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: TruffleHog秘密扫描
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: ${{ github.event.repository.default_branch }}
+        head: HEAD
+        extra_args: --debug --only-verified 

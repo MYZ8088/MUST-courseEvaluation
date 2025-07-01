@@ -8,6 +8,7 @@ import com.must.courseevaluation.model.User;
 import com.must.courseevaluation.security.UserDetailsImpl;
 import com.must.courseevaluation.security.jwt.JwtUtils;
 import com.must.courseevaluation.service.EmailService;
+import com.must.courseevaluation.service.SecurityAuditService;
 import com.must.courseevaluation.service.UserService;
 import com.must.courseevaluation.service.VerificationCodeService;
 import jakarta.validation.Valid;
@@ -22,6 +23,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -46,9 +48,15 @@ public class AuthController {
     @Autowired
     private EmailService emailService;
 
+    @Autowired
+    private SecurityAuditService securityAuditService;
+
     @PostMapping("/login")
-    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
-        logger.info("尝试登录用户: {}", loginRequest.getUsername());
+    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest, HttpServletRequest request) {
+        String ipAddress = getClientIpAddress(request);
+        String userAgent = request.getHeader("User-Agent");
+        
+        logger.info("尝试登录用户: {} 来自IP: {}", loginRequest.getUsername(), ipAddress);
         
         try {
             // 先检查用户是否存在及状态
@@ -56,6 +64,11 @@ public class AuthController {
                 User user = userService.findByUsername(loginRequest.getUsername());
                 if (!user.isActive()) {
                     logger.warn("用户尝试登录但账户已被停用: {}", loginRequest.getUsername());
+                    
+                    // 记录安全事件
+                    securityAuditService.logSecurityEvent("ACCOUNT_DISABLED_LOGIN_ATTEMPT", 
+                            "尝试使用已停用账户登录", loginRequest.getUsername(), ipAddress, "MEDIUM");
+                    
                     Map<String, String> response = new HashMap<>();
                     response.put("message", "账户已被停用，请联系管理员");
                     return ResponseEntity.status(403).body(response);
@@ -75,10 +88,16 @@ public class AuthController {
                     .map(item -> item.getAuthority())
                     .findFirst().orElse(User.Role.ROLE_STUDENT.name()));
             
+            // 记录成功登录
+            securityAuditService.logLoginAttempt(loginRequest.getUsername(), true, ipAddress, userAgent);
+            
             logger.info("用户登录成功: {}", loginRequest.getUsername());
             return ResponseEntity.ok(new JwtResponse(jwt, userDetails.getId(), userDetails.getUsername(), 
                     userDetails.getEmail(), role));
         } catch (Exception e) {
+            // 记录失败登录
+            securityAuditService.logLoginAttempt(loginRequest.getUsername(), false, ipAddress, userAgent);
+            
             logger.error("登录失败: {}", e.getMessage());
             return ResponseEntity.badRequest().body(Map.of("message", " " + e.getMessage()));
         }
@@ -155,5 +174,20 @@ public class AuthController {
     // 验证邮箱验证码
     private boolean validateEmailCode(String email, String code) {
         return verificationCodeService.validateVerificationCode(email, code);
+    }
+    
+    // 获取客户端IP地址
+    private String getClientIpAddress(HttpServletRequest request) {
+        String xForwardedFor = request.getHeader("X-Forwarded-For");
+        if (xForwardedFor != null && !xForwardedFor.isEmpty() && !"unknown".equalsIgnoreCase(xForwardedFor)) {
+            return xForwardedFor.split(",")[0];
+        }
+        
+        String xRealIp = request.getHeader("X-Real-IP");
+        if (xRealIp != null && !xRealIp.isEmpty() && !"unknown".equalsIgnoreCase(xRealIp)) {
+            return xRealIp;
+        }
+        
+        return request.getRemoteAddr();
     }
 } 
