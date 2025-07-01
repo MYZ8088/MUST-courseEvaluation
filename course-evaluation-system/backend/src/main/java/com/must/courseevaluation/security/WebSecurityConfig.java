@@ -3,6 +3,7 @@ package com.must.courseevaluation.security;
 import com.must.courseevaluation.security.jwt.AuthEntryPointJwt;
 import com.must.courseevaluation.security.jwt.AuthTokenFilter;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -21,6 +22,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.Arrays;
+import java.util.List;
 
 @Configuration
 @EnableWebSecurity
@@ -32,6 +34,9 @@ public class WebSecurityConfig {
 
     @Autowired
     private AuthEntryPointJwt unauthorizedHandler;
+    
+    @Value("${app.cors.allowed-origins:http://localhost:8080,http://127.0.0.1:8080}")
+    private String[] allowedOrigins;
 
     @Bean
     public AuthTokenFilter authenticationJwtTokenFilter() {
@@ -73,6 +78,11 @@ public class WebSecurityConfig {
                     .requestMatchers("/reviews/course/**").permitAll()
                     .requestMatchers("/reviews/teacher/**").permitAll()
                     .requestMatchers("/users/**").permitAll()
+                    // 添加监控端点 - 公开访问
+                    .requestMatchers("/system/health", "/system/info").permitAll()
+                    .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                    .requestMatchers("/actuator/**").hasRole("ADMIN")
+                    .requestMatchers("/system/**").hasRole("ADMIN")
                     .anyRequest().authenticated()
             );
         
@@ -88,10 +98,13 @@ public class WebSecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList("*"));
+        // 使用配置的允许来源，不再使用通配符
+        configuration.setAllowedOrigins(Arrays.asList(allowedOrigins));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("authorization", "content-type", "x-auth-token"));
         configuration.setExposedHeaders(Arrays.asList("x-auth-token"));
+        // 启用凭证支持
+        configuration.setAllowCredentials(true);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
