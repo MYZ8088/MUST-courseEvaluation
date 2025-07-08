@@ -1,5 +1,7 @@
 package com.must.courseevaluation.controller;
 
+import com.must.courseevaluation.security.InputValidationUtils;
+import com.must.courseevaluation.service.AsyncEmailService;
 import com.must.courseevaluation.dto.UserDto;
 import com.must.courseevaluation.dto.auth.JwtResponse;
 import com.must.courseevaluation.dto.auth.LoginRequest;
@@ -7,7 +9,6 @@ import com.must.courseevaluation.dto.auth.RegisterRequest;
 import com.must.courseevaluation.model.User;
 import com.must.courseevaluation.security.UserDetailsImpl;
 import com.must.courseevaluation.security.jwt.JwtUtils;
-import com.must.courseevaluation.service.EmailService;
 import com.must.courseevaluation.service.UserService;
 import com.must.courseevaluation.service.VerificationCodeService;
 import jakarta.validation.Valid;
@@ -41,14 +42,26 @@ public class AuthController {
     private JwtUtils jwtUtils;
 
     @Autowired
+    private InputValidationUtils inputValidationUtils;
+
+    @Autowired
     private VerificationCodeService verificationCodeService;
 
     @Autowired
-    private EmailService emailService;
+    private AsyncEmailService asyncEmailService;
 
     @PostMapping("/login")
     public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
         logger.info("尝试登录用户: {}", loginRequest.getUsername());
+        
+        // 输入验证
+        if (inputValidationUtils.containsSqlInjection(loginRequest.getUsername()) ||
+            inputValidationUtils.containsXss(loginRequest.getUsername())) {
+            logger.warn("检测到恶意登录尝试: {}", loginRequest.getUsername());
+            Map<String, String> response = new HashMap<>();
+            response.put("message", "输入包含非法字符");
+            return ResponseEntity.badRequest().body(response);
+        }
         
         try {
             // 先检查用户是否存在及状态
@@ -88,6 +101,23 @@ public class AuthController {
     public ResponseEntity<?> registerUser(@Valid @RequestBody RegisterRequest registerRequest) {
         logger.info("尝试注册新用户: {}", registerRequest.getUsername());
         
+        // 输入验证
+        if (!inputValidationUtils.isValidUsername(registerRequest.getUsername())) {
+            return ResponseEntity.badRequest().body(Map.of("message", "用户名格式不正确，只能包含字母、数字、下划线，长度3-20位"));
+        }
+        
+        if (!inputValidationUtils.isValidEmail(registerRequest.getEmail())) {
+            return ResponseEntity.badRequest().body(Map.of("message", "邮箱格式不正确"));
+        }
+        
+        if (!inputValidationUtils.isStrongPassword(registerRequest.getPassword())) {
+            return ResponseEntity.badRequest().body(Map.of("message", "密码强度不够，必须包含大小写字母和数字，长度8-32位"));
+        }
+        
+        // 清理输入
+        registerRequest.setUsername(inputValidationUtils.sanitizeInput(registerRequest.getUsername()));
+        registerRequest.setEmail(inputValidationUtils.sanitizeInput(registerRequest.getEmail()));
+        
         // 检查用户名是否已存在
         if (userService.existsByUsername(registerRequest.getUsername())) {
             return ResponseEntity.badRequest().body(Map.of("message", "错误: 用户名已被使用!"));
@@ -124,6 +154,11 @@ public class AuthController {
             return ResponseEntity.badRequest().body(Map.of("message", "错误: 电子邮箱不能为空!"));
         }
         
+        // 验证邮箱格式
+        if (!inputValidationUtils.isValidEmail(email)) {
+            return ResponseEntity.badRequest().body(Map.of("message", "错误: 邮箱格式不正确!"));
+        }
+        
         try {
             // 生成随机验证码
             String verificationCode = verificationCodeService.generateVerificationCode();
@@ -131,8 +166,8 @@ public class AuthController {
             // 存储验证码
             verificationCodeService.storeVerificationCode(email, verificationCode);
             
-            // 发送验证码邮件
-            emailService.sendVerificationCodeEmail(email, verificationCode);
+            // 异步发送验证码邮件
+            asyncEmailService.sendVerificationCodeEmailAsync(email, verificationCode);
             
             logger.info("验证码已发送到邮箱: {}", email);
             

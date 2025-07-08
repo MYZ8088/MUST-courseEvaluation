@@ -7,8 +7,30 @@ const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json'
   },
-  timeout: 10000
+  timeout: 15000 // 增加超时时间
 })
+
+// 请求重试配置
+const MAX_RETRIES = 3
+const RETRY_DELAY = 1000
+
+// 重试函数
+const retryRequest = (config, retryCount = 0) => {
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      apiClient(config)
+        .then(resolve)
+        .catch((error) => {
+          if (retryCount < MAX_RETRIES && error.code === 'ECONNABORTED') {
+            console.log(`请求重试 ${retryCount + 1}/${MAX_RETRIES}`)
+            retryRequest(config, retryCount + 1).then(resolve).catch(reject)
+          } else {
+            reject(error)
+          }
+        })
+    }, RETRY_DELAY * retryCount)
+  })
+}
 
 // 请求拦截器
 apiClient.interceptors.request.use(
@@ -45,6 +67,12 @@ apiClient.interceptors.response.use(
     return response
   },
   error => {
+    // 如果是网络错误，尝试重试
+    if (error.code === 'ECONNABORTED' && !error.config.__retryCount) {
+      error.config.__retryCount = 0
+      return retryRequest(error.config)
+    }
+    
     if (error.response) {
       // 检查是否是登录请求
       const isLoginRequest = error.config.url.includes('auth/login');
@@ -82,6 +110,8 @@ apiClient.interceptors.response.use(
           } else {
             error.message = '请求的资源不存在';
           }
+          break;
+          error.message = '请求过于频繁，请稍后再试';
           break;
         case 500:
           error.message = '服务器内部错误，请稍后再试';
